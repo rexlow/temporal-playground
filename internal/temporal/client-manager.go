@@ -38,6 +38,10 @@ func (cm *ClientManager) GetClient() client.Client {
 	return cm.client
 }
 
+func (cm *ClientManager) NewScheduleClient() client.ScheduleClient {
+	return cm.client.ScheduleClient()
+}
+
 func (cm *ClientManager) Close() {
 	if cm.client != nil {
 		cm.client.Close()

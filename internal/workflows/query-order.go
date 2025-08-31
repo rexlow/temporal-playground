@@ -10,7 +10,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
-func QueryOrder(ctx workflow.Context, orderID string) error {
+func QueryOrder(ctx workflow.Context, orderID string) (string, error) {
 	logger := workflow.GetLogger(ctx)
 
 	retryPolicy := &temporal.RetryPolicy{
@@ -63,11 +63,11 @@ func QueryOrder(ctx workflow.Context, orderID string) error {
 		var childExecution workflow.Execution
 		if err := childFuture.GetChildWorkflowExecution().Get(ctx, &childExecution); err != nil {
 			logger.Error("Failed to start StaleWorkflow", "error", err.Error())
-			return err
+			return "", err
 		}
 
-		return nil
+		return "Job moved to Stale Queue", nil
 	}
 
-	return nil
+	return "Order was queried successfully", nil
 }

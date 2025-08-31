@@ -31,6 +31,12 @@ type StartWorkflowOptions struct {
 	Priority     string
 }
 
+type ScheduleWorkflowOptions struct {
+	Specs            client.ScheduleSpec
+	RemainingActions int // number of iterations, 0 means infinite
+	StartWorkflowOptions
+}
+
 func (wm *WorkflowManager) StartWorkflow(ctx context.Context, options StartWorkflowOptions, workflowFunc any, args ...any) (client.WorkflowRun, error) {
 
 	searchAttributes := map[string]any{
@@ -48,6 +54,38 @@ func (wm *WorkflowManager) StartWorkflow(ctx context.Context, options StartWorkf
 	}
 
 	return wm.clientManager.GetClient().ExecuteWorkflow(ctx, workflowOptions, workflowFunc, args...)
+}
+
+func (wm *WorkflowManager) StartScheduledWorkflow(ctx context.Context, options ScheduleWorkflowOptions, workflowFunc any, args ...any) (client.ScheduleHandle, error) {
+
+	scheduleClient := wm.clientManager.NewScheduleClient()
+
+	searchAttributes := map[string]any{
+		"CustomStringField":   options.OrderID,
+		"CustomKeywordField":  options.Environment,
+		"CustomIntField":      1, // use this as priority
+		"CustomDatetimeField": time.Now(),
+	}
+
+	workflowOptions := client.ScheduleOptions{
+		ID:               options.OrderID, // schedule ID
+		Spec:             options.Specs,
+		RemainingActions: options.RemainingActions,
+		SearchAttributes: searchAttributes,
+		Overlap:          enumspb.SCHEDULE_OVERLAP_POLICY_ALLOW_ALL,
+		Action: &client.ScheduleWorkflowAction{
+			ID:        options.OrderID,
+			Workflow:  workflowFunc,
+			Args:      args,
+			TaskQueue: options.TaskQueue,
+		},
+	}
+	return scheduleClient.Create(ctx, workflowOptions)
+}
+
+func (wm *WorkflowManager) GetScheduleHandle(ctx context.Context, scheduleID string) client.ScheduleHandle {
+	scheduleClient := wm.clientManager.NewScheduleClient()
+	return scheduleClient.GetHandle(ctx, scheduleID)
 }
 
 func (wm *WorkflowManager) GetWorkflow(ctx context.Context, workflowID string, runID string) client.WorkflowRun {

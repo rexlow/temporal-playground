@@ -23,12 +23,12 @@ const (
 )
 
 var (
-	workflowID   string
-	taskQueue    string
-	orderID      string
-	environment  string
-	businessUnit string
-	priority     string
+	workflowID            string
+	orderID               string
+	environment           string
+	businessUnit          string
+	priority              string
+	recurringPaymentTerms int
 )
 
 var clientCmd = &cobra.Command{
@@ -50,12 +50,17 @@ var startWorkflowCmd = &cobra.Command{
 		})
 		defer workflowManager.Close()
 
-		workflowID = fmt.Sprintf("payment-%s", orderID)
+		orderIDFlag, _ := cmd.Flags().GetString("order-id")
+		if orderIDFlag == "" {
+			orderIDFlag = uuid.NewString()
+		}
+
+		workflowID = fmt.Sprintf("payment-%s", orderIDFlag)
 
 		workflowOptions := temporal.StartWorkflowOptions{
 			WorkflowID:   workflowID,
-			TaskQueue:    taskQueue,
-			OrderID:      orderID,
+			TaskQueue:    QueueQueryOrder,
+			OrderID:      orderIDFlag,
 			Environment:  environment,
 			BusinessUnit: businessUnit,
 			Priority:     priority,
@@ -65,12 +70,12 @@ var startWorkflowCmd = &cobra.Command{
 			context.Background(),
 			workflowOptions,
 			workflows.QueryOrder,
-			orderID,
+			orderIDFlag,
 		)
 		if err != nil {
 			// Check if it's a duplicate workflow error
 			if strings.Contains(err.Error(), "WorkflowExecutionAlreadyStarted") {
-				log.Printf("Order %s is already being processed (workflow %s) - cannot start duplicate", orderID, workflowID)
+				log.Printf("Order %s is already being processed (workflow %s) - cannot start duplicate", orderIDFlag, workflowID)
 				return
 			}
 			log.Fatalf("Unable to execute workflow: %v", err)
@@ -114,7 +119,7 @@ var simulatePaymentWorkflowCmd = &cobra.Command{
 
 					workflowOptions := temporal.StartWorkflowOptions{
 						WorkflowID:   workflowID,
-						TaskQueue:    "query-order",
+						TaskQueue:    QueueQueryOrder,
 						OrderID:      orderID,
 						Environment:  environment,
 						BusinessUnit: businessUnit,
@@ -184,23 +189,96 @@ var signalManualWorkflowCmd = &cobra.Command{
 	},
 }
 
+var createRecurringPaymentCmd = &cobra.Command{
+	Use:   "create-recurring-payment",
+	Short: "Create a recurring payment for a customer",
+	Run: func(cmd *cobra.Command, args []string) {
+
+		orderIDFlag, _ := cmd.Flags().GetString("order-id")
+		if orderIDFlag == "" {
+			orderIDFlag = uuid.NewString()
+		}
+
+		workflowManager := temporal.NewWorkflowManager(client.Options{
+			HostPort:  hostPort,
+			Namespace: namespace,
+		})
+		defer workflowManager.Close()
+
+		scheduleHandle, err := workflowManager.StartScheduledWorkflow(context.Background(), temporal.ScheduleWorkflowOptions{
+			RemainingActions: recurringPaymentTerms,
+			Specs: client.ScheduleSpec{
+				TimeZoneName: "Asia/Kuala_Lumpur",
+				Intervals: []client.ScheduleIntervalSpec{
+					{
+						Every: 1 * time.Minute,
+					},
+				},
+			},
+			StartWorkflowOptions: temporal.StartWorkflowOptions{
+				WorkflowID:   orderIDFlag,
+				TaskQueue:    QueueRecurringSchedule,
+				OrderID:      orderIDFlag,
+				Environment:  environment,
+				BusinessUnit: businessUnit,
+				Priority:     priority,
+			},
+		}, workflows.RegisterRecurringPayment, orderIDFlag)
+		if err != nil {
+			log.Fatalf("Failed to schedule recurring payment workflow: %v", err)
+		}
+
+		log.Printf("Successfully scheduled recurring payment workflow: %s (schedule ID: %s)", orderIDFlag, scheduleHandle.GetID())
+	},
+}
+
+var cancelRecurringPaymentCmd = &cobra.Command{
+	Use:   "cancel-recurring-payment",
+	Short: "Cancel a recurring payment workflow",
+	Run: func(cmd *cobra.Command, args []string) {
+
+		ctx := context.Background()
+
+		workflowManager := temporal.NewWorkflowManager(client.Options{
+			HostPort:  hostPort,
+			Namespace: namespace,
+		})
+		defer workflowManager.Close()
+
+		if orderID == "" {
+			log.Fatalf("Order ID is required")
+		}
+
+		scheduleHandle := workflowManager.GetScheduleHandle(ctx, orderID)
+		if scheduleHandle == nil {
+			log.Fatalf("Unable to cancel workflow")
+		}
+
+		if err := scheduleHandle.Delete(ctx); err != nil {
+			log.Fatalf("Unable to cancel workflow: %v", err)
+		}
+
+		log.Printf("Successfully cancelled recurring payment workflow %s", workflowID)
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(clientCmd)
 
 	clientCmd.AddCommand(startWorkflowCmd)
 	clientCmd.AddCommand(simulatePaymentWorkflowCmd)
 	clientCmd.AddCommand(signalManualWorkflowCmd)
+	clientCmd.AddCommand(createRecurringPaymentCmd)
+	clientCmd.AddCommand(cancelRecurringPaymentCmd)
 
 	// Flags for start-workflow command
 	startWorkflowCmd.Flags().StringVarP(&workflowID, "workflow-id", "w", "query-order-workflow-default", "Workflow ID")
-	startWorkflowCmd.Flags().StringVarP(&taskQueue, "task-queue", "t", "query-order", "Task queue name")
-	startWorkflowCmd.Flags().StringVarP(&orderID, "order-id", "o", uuid.NewString(), "Order ID to process")
+	startWorkflowCmd.Flags().StringVarP(&orderID, "order-id", "o", "", "Order ID to process")
 	startWorkflowCmd.Flags().StringVarP(&environment, "environment", "e", "development", "Environment (dev/staging/prod)")
 	startWorkflowCmd.Flags().StringVarP(&businessUnit, "business-unit", "b", "retail", "Business unit")
 	startWorkflowCmd.Flags().StringVarP(&priority, "priority", "p", "normal", "Priority level (low/normal/high/urgent)")
 
 	// Flags for start-workflow command
-	simulatePaymentWorkflowCmd.Flags().StringVarP(&taskQueue, "task-queue", "t", "query-order", "Task queue name")
 	simulatePaymentWorkflowCmd.Flags().StringVarP(&environment, "environment", "e", "development", "Environment (dev/staging/prod)")
 	simulatePaymentWorkflowCmd.Flags().StringVarP(&businessUnit, "business-unit", "b", "retail", "Business unit")
 	simulatePaymentWorkflowCmd.Flags().StringVarP(&priority, "priority", "p", "normal", "Priority level (low/normal/high/urgent)")
@@ -208,5 +286,14 @@ func init() {
 	// Flags for signal-manual-workflow command
 	signalManualWorkflowCmd.Flags().StringVarP(&workflowID, "workflow-id", "w", "", "Manual workflow ID to signal")
 	signalManualWorkflowCmd.MarkFlagRequired("workflow-id")
+
+	createRecurringPaymentCmd.Flags().IntVarP(&recurringPaymentTerms, "terms", "r", 0, "Number of payment terms (0 means infinite)")
+	createRecurringPaymentCmd.Flags().StringVarP(&orderID, "order-id", "o", "", "Use this as consent ID")
+	createRecurringPaymentCmd.Flags().StringVarP(&environment, "environment", "e", "development", "Environment (dev/staging/prod)")
+	createRecurringPaymentCmd.Flags().StringVarP(&businessUnit, "business-unit", "b", "retail", "Business unit")
+	createRecurringPaymentCmd.Flags().StringVarP(&priority, "priority", "p", "normal", "Priority level (low/normal/high/urgent)")
+
+	cancelRecurringPaymentCmd.Flags().StringVarP(&orderID, "order-id", "o", "", "Order ID to cancel")
+	cancelRecurringPaymentCmd.MarkFlagRequired("order-id")
 
 }

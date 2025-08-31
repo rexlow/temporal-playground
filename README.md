@@ -76,6 +76,21 @@ To simulate real-time payments flooding in for workers to handle:
 ./temporal-playground client simulate-payment -n local-rex
 ```
 
+#### Recurring Payments with scheduled jobs
+It takes a lot of load and architectural load moving from managing recurring workloads such as monthly gym membership payment from traditional scheduler approaches to asynchronous approaches such as a workflow engine. Remember to think about payment term lifecycles and ways to terminate. 
+
+I have also included examples of how to manage a workflow version in here. Take a look at `RegisterRecurringPayment` workflow.
+
+To create a recurring payment contract
+```bash
+./temporal-playground client create-recurring-payment
+```
+
+To cancel a recurring payment contract
+```bash
+./temporal-playground client cancel-recurring-payment -o order-id
+```
+
 ## Screenshot
 
 With retries and state management in place, every order is deterministically processed at scale.

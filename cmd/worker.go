@@ -25,15 +25,19 @@ var workerCmd = &cobra.Command{
 			temporal.NewWorkerManager(client.Options{
 				HostPort:  hostPort,
 				Namespace: namespace,
-			}, "query-order"),
+			}, QueueQueryOrder),
 			temporal.NewWorkerManager(client.Options{
 				HostPort:  hostPort,
 				Namespace: namespace,
-			}, "stale-order"),
+			}, QueueStaleOrder),
 			temporal.NewWorkerManager(client.Options{
 				HostPort:  hostPort,
 				Namespace: namespace,
-			}, "manual-handle"),
+			}, QueueManualHandle),
+			temporal.NewWorkerManager(client.Options{
+				HostPort:  hostPort,
+				Namespace: namespace,
+			}, QueueRecurringSchedule),
 		}
 
 		// Ensure all workers are closed on exit
@@ -62,8 +66,20 @@ var workerCmd = &cobra.Command{
 		workers[2].RegisterActivity(activities.FinalizeStaleWorkflow)
 		workers[2].RegisterActivity(activities.ConcludeQueryOrder)
 
+		// Recurring Payment Worker (index 3)
+		workers[3].RegisterWorkflow(workflows.RegisterRecurringPayment)
+		workers[3].RegisterActivity(activities.DoSomething)
+		workers[3].RegisterActivity(activities.RecurringPaymentV1)
+		workers[3].RegisterActivity(activities.RecurringPaymentV2)
+		workers[3].RegisterActivity(activities.RecurringPaymentV3)
+
 		var wg sync.WaitGroup
-		workerNames := []string{"query-order", "stale-order", "manual-handle"}
+		workerNames := []string{
+			QueueQueryOrder,
+			QueueStaleOrder,
+			QueueManualHandle,
+			QueueRecurringSchedule,
+		}
 
 		for i, worker := range workers {
 			wg.Add(1)

@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	FailProbability = 1.0 // 80% failed
+	FailProbability = 0.8 // 80% failed
 )
 
 // heavy operation that will fail randomly
